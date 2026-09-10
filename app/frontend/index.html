@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Splitwise Cloud Helper</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; }
+    .card { border: 1px solid #ccc; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+    input, button { display: block; width: 100%; margin: 10px 0; padding: 10px; box-sizing: border-box; }
+    button { background-color: #0070f3; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; }
+    #status { margin-top: 10px; font-weight: bold; color: green; }
+  </style>
+</head>
+<body>
+  <h2>Shared-House Expense Splitter</h2>
+  <div class="card">
+    <h3>Add New Expense</h3>
+    <input type="text" id="groupId" placeholder="Group ID (e.g., house-101)" value="house-101" />
+    <input type="text" id="paidBy" placeholder="User ID / Name" value="User 1" />
+    <input type="number" id="amount" placeholder="Amount ($)" value="45.00" step="0.01" />
+    <input type="text" id="description" placeholder="Description (e.g., Groceries)" value="Power Bill" />
+    <button onclick="submitExpense()">Add Expense & Notify Group</button>
+    <div id="status"></div>
+  </div>
+
+  <script>
+    // Update API_URL with your EC2 API public IP/DNS after Terraform deployment
+    const API_URL = 'http://YOUR_API_EC2_PUBLIC_IP:5000';
+
+    async function submitExpense() {
+      const statusDiv = document.getElementById('status');
+      statusDiv.textContent = 'Submitting expense...';
+      
+      const payload = {
+        group_id: document.getElementById('groupId').value,
+        paid_by: document.getElementById('paidBy').value,
+        amount: parseFloat(document.getElementById('amount').value),
+        description: document.getElementById('description').value
+      };
+
+      try {
+        const response = await fetch(`${API_URL}/expenses`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (response.ok) {
+          statusDiv.textContent = `Success! Expense ID #${data.expense_id} recorded & SNS alert triggered.`;
+        } else {
+          statusDiv.textContent = 'Error: ' + JSON.stringify(data);
+        }
+      } catch (err) {
+        statusDiv.textContent = 'Network Error: Check API endpoint connection.';
+      }
+    }
+  </script>
+</body>
+</html>
