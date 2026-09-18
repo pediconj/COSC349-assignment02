@@ -215,6 +215,94 @@ resource "aws_instance" "frontend_web" {
   key_name             = "vockey"
   vpc_security_group_ids = [aws_security_group.app_sg.id]
 
+  user_data_base64 = base64encode(<<-EOF
+#!/bin/bash
+exec > /var/log/user_data.log 2>&1
+set -x
+
+systemctl stop unattended-upgrades.service || true
+systemctl disable unattended-upgrades.service || true
+systemctl mask unattended-upgrades.service || true
+
+pkill -9 -f apt-get || true
+pkill -9 -f dpkg || true
+
+rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock* /var/cache/apt/archives/lock* || true
+dpkg --configure -a || true
+
+export DEBIAN_FRONTEND=noninteractive
+for i in {1..10}; do
+  apt-get update -y && apt-get install -y nginx && break
+  sleep 5
+done
+
+cat << 'HTML' > /var/www/html/index.html
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Splitwise Expense Tracker</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 480px; margin: 40px auto; padding: 20px; background: #f9f9f9; }
+        .card { background: white; padding: 24px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        h2 { margin-top: 0; color: #333; }
+        input, button { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 14px; }
+        button { background-color: #0070f3; color: white; border: none; font-weight: bold; cursor: pointer; margin-top: 16px; }
+        button:hover { background-color: #0051a2; }
+        #status { margin-top: 16px; font-weight: bold; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>Splitwise Web App</h2>
+        <input type="text" id="group_id" placeholder="Group ID (e.g. apartment-1)">
+        <input type="text" id="paid_by" placeholder="Paid By (e.g. Jace)">
+        <input type="number" step="0.01" id="amount" placeholder="Amount ($)">
+        <input type="text" id="description" placeholder="Description (e.g. Groceries)">
+        <button onclick="submitExpense()">Submit Expense</button>
+        <div id="status"></div>
+    </div>
+
+    <script>
+        async function submitExpense() {
+            const statusDiv = document.getElementById('status');
+            statusDiv.style.color = '#333';
+            statusDiv.innerText = 'Submitting expense...';
+            
+            const payload = {
+                group_id: document.getElementById('group_id').value || 'default',
+                paid_by: document.getElementById('paid_by').value || 'anon',
+                amount: parseFloat(document.getElementById('amount').value) || 0,
+                description: document.getElementById('description').value || 'expense'
+            };
+
+            try {
+                const res = await fetch('http://${aws_instance.backend_api.public_ip}:5000/expenses', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    statusDiv.style.color = 'green';
+                    statusDiv.innerText = 'Success! Expense ID: ' + data.expense_id;
+                } else {
+                    statusDiv.style.color = 'red';
+                    statusDiv.innerText = 'Error submitting expense.';
+                }
+            } catch (err) {
+                statusDiv.style.color = 'red';
+                statusDiv.innerText = 'Connection error: ' + err.message;
+            }
+        }
+    </script>
+</body>
+</html>
+HTML
+
+systemctl restart nginx
+EOF
+  )
+
   tags = {
     Name = "Splitwise-Frontend-Web"
   }
