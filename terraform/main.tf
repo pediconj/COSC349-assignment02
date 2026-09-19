@@ -103,7 +103,7 @@ for i in {1..10}; do
   sleep 5
 done
 
-# 3. Write Flask Application
+# 3. Write Flask Application with CORS support
 mkdir -p /app
 cat << 'APP' > /app/app.py
 import os, time, boto3, psycopg2
@@ -140,12 +140,22 @@ def ensure_table_exists():
             time.sleep(3)
     return False
 
+@app.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization'
+    response.headers['Access-Control-Allow-Methods'] = 'GET,POST,OPTIONS'
+    return response
+
 @app.route("/health", methods=["GET"])
 def health_check():
     return jsonify({"status": "healthy"}), 200
 
-@app.route("/expenses", methods=["POST"])
+@app.route("/expenses", methods=["POST", "OPTIONS"])
 def add_expense():
+    if request.method == "OPTIONS":
+        return jsonify({"status": "ok"}), 200
+
     ensure_table_exists()
     data = request.json or {}
     group_id = data.get("group_id", "default")
@@ -208,7 +218,7 @@ EOF
   }
 }
 
-# 5. Compute Instance: Frontend Web Server
+# 5. Compute Instance: Frontend Web Server with Reverse Proxy
 resource "aws_instance" "frontend_web" {
   ami                  = "ami-0c7217cdde317cfec"
   instance_type        = "t2.micro"
@@ -236,6 +246,28 @@ for i in {1..10}; do
   sleep 5
 done
 
+# Configure Nginx Reverse Proxy
+cat << 'NGINX' > /etc/nginx/sites-available/default
+server {
+    listen 80 default_server;
+    server_name _;
+
+    root /var/www/html;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    location /api/ {
+        proxy_pass http://${aws_instance.backend_api.public_ip}:5000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+NGINX
+
+# Write Web App
 cat << 'HTML' > /var/www/html/index.html
 <!DOCTYPE html>
 <html>
@@ -254,7 +286,7 @@ cat << 'HTML' > /var/www/html/index.html
 <body>
     <div class="card">
         <h2>Splitwise Web App</h2>
-        <input type="text" id="group_id" placeholder="Group ID (e.g. apartment-1)">
+        <input type="text" id="group_id" placeholder="Group ID (e.g. flat-1)">
         <input type="text" id="paid_by" placeholder="Paid By (e.g. Jace)">
         <input type="number" step="0.01" id="amount" placeholder="Amount ($)">
         <input type="text" id="description" placeholder="Description (e.g. Groceries)">
@@ -276,7 +308,7 @@ cat << 'HTML' > /var/www/html/index.html
             };
 
             try {
-                const res = await fetch('http://${aws_instance.backend_api.public_ip}:5000/expenses', {
+                const res = await fetch('/api/expenses', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
