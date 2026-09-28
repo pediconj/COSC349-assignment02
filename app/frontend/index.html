@@ -1,59 +1,265 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Splitwise Cloud Helper</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; }
-    .card { border: 1px solid #ccc; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
-    input, button { display: block; width: 100%; margin: 10px 0; padding: 10px; box-sizing: border-box; }
-    button { background-color: #0070f3; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; }
-    #status { margin-top: 10px; font-weight: bold; color: green; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SureSplit - Expense Sharing Made Simple</title>
+    <style>
+        :root { --primary: #10b981; --primary-dark: #059669; --bg: #f3f4f6; --card-bg: #ffffff; --text: #1f2937; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 0; }
+        header { background: var(--card-bg); border-bottom: 1px solid #e5e7eb; padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; }
+        .logo { font-size: 24px; font-weight: 800; color: var(--primary-dark); cursor: pointer; }
+        .container { max-width: 900px; margin: 32px auto; padding: 0 16px; }
+        .card { background: var(--card-bg); border-radius: 12px; padding: 24px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); margin-bottom: 24px; }
+        h2 { margin-top: 0; font-size: 20px; font-weight: 700; }
+        .btn { background: var(--primary); color: white; border: none; padding: 10px 18px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 14px; }
+        .btn:hover { background: var(--primary-dark); }
+        .btn-secondary { background: #e5e7eb; color: var(--text); margin-right: 8px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; margin-top: 16px; }
+        .group-card { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; cursor: pointer; transition: transform 0.1s, border-color 0.1s; }
+        .group-card:hover { transform: translateY(-2px); border-color: var(--primary); }
+        .group-card h3 { margin: 0 0 8px 0; color: var(--primary-dark); }
+        .members-text { font-size: 13px; color: #6b7280; }
+        input, select { width: 100%; padding: 10px; margin: 8px 0 16px 0; border: 1px solid #d1d5db; border-radius: 6px; box-sizing: border-box; }
+        .flex { display: flex; align-items: center; justify-content: space-between; }
+        .badge { display: inline-block; padding: 4px 12px; border-radius: 9999px; font-weight: 600; font-size: 13px; }
+        .badge-owed { background: #d1fae5; color: #065f46; }
+        .badge-owes { background: #fee2e2; color: #991b1b; }
+        .badge-settled { background: #f3f4f6; color: #4b5563; }
+        .balance-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #f3f4f6; }
+        .balance-item:last-child { border-bottom: none; }
+        .expense-item { display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #f9fafb; border-radius: 6px; margin-bottom: 8px; }
+        .hidden { display: none; }
+    </style>
 </head>
 <body>
-  <h2>Shared-House Expense Splitter</h2>
-  <div class="card">
-    <h3>Add New Expense</h3>
-    <input type="text" id="groupId" placeholder="Group ID (e.g., house-101)" value="house-101" />
-    <input type="text" id="paidBy" placeholder="User ID / Name" value="User 1" />
-    <input type="number" id="amount" placeholder="Amount ($)" value="45.00" step="0.01" />
-    <input type="text" id="description" placeholder="Description (e.g., Groceries)" value="Power Bill" />
-    <button onclick="submitExpense()">Add Expense & Notify Group</button>
-    <div id="status"></div>
-  </div>
+    <header>
+        <div class="logo" onclick="showGroupList()">SureSplit</div>
+        <div><button class="btn" onclick="toggleNewGroupForm()">+ New Group</button></div>
+    </header>
 
-  <script>
-    // Update API_URL with your EC2 API public IP/DNS after Terraform deployment
-    const API_URL = 'http://13.223.254.76:5000';
+    <div class="container">
+        <div id="new-group-card" class="card hidden">
+            <h2>Create New SureSplit Group</h2>
+            <input type="text" id="new-group-name" placeholder="Group Name (e.g. Summer Flat)">
+            <input type="text" id="new-group-members" placeholder="Members comma-separated (e.g. Jace, Alex, Sam)">
+            <button class="btn" onclick="createGroup()">Create Group</button>
+            <button class="btn btn-secondary" onclick="toggleNewGroupForm()">Cancel</button>
+        </div>
 
-    async function submitExpense() {
-      const statusDiv = document.getElementById('status');
-      statusDiv.textContent = 'Submitting expense...';
-      
-      const payload = {
-        group_id: document.getElementById('groupId').value,
-        paid_by: document.getElementById('paidBy').value,
-        amount: parseFloat(document.getElementById('amount').value),
-        description: document.getElementById('description').value
-      };
+        <div id="group-list-view">
+            <div class="card">
+                <h2>Your Expense Groups</h2>
+                <div id="groups-grid" class="grid">Loading groups...</div>
+            </div>
+        </div>
 
-      try {
-        const response = await fetch(`${API_URL}/expenses`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await response.json();
-        if (response.ok) {
-          statusDiv.textContent = `Success! Expense ID #${data.expense_id} recorded & SNS alert triggered.`;
-        } else {
-          statusDiv.textContent = 'Error: ' + JSON.stringify(data);
+        <div id="group-detail-view" class="hidden">
+            <button class="btn btn-secondary" onclick="showGroupList()">← Back to Groups</button>
+            
+            <div class="card" style="margin-top: 16px;">
+                <div class="flex">
+                    <div>
+                        <h2 id="detail-group-name" style="margin: 0; font-size: 24px;">Group Details</h2>
+                        <div id="detail-group-members" class="members-text" style="margin-top: 4px;"></div>
+                    </div>
+                    <div style="text-align: right;">
+                        <span class="members-text">Total Group Spent</span>
+                        <div id="detail-total-spent" style="font-size: 22px; font-weight: 800; color: var(--primary-dark);">$0.00</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Group Balance Breakdown</h2>
+                <div id="balances-container">Loading balances...</div>
+            </div>
+
+            <div class="card">
+                <h2>Add New Expense</h2>
+                <div id="expense-form-status" style="margin-bottom: 8px; font-weight: 600;"></div>
+                <input type="text" id="expense-desc" placeholder="Expense Description (e.g. Weekly Groceries)">
+                <input type="number" step="0.01" id="expense-amount" placeholder="Amount ($)">
+                <label class="members-text">Paid By</label>
+                <select id="expense-paid-by"></select>
+                <button class="btn" onclick="submitExpense()">Add Expense</button>
+            </div>
+
+            <div class="card">
+                <h2>Expense History</h2>
+                <div id="expenses-history">No expenses recorded yet.</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentGroup = null;
+
+        async function fetchGroups() {
+            try {
+                const res = await fetch('/api/groups');
+                const groups = await res.json();
+                const grid = document.getElementById('groups-grid');
+                grid.innerHTML = '';
+                
+                if (groups.length === 0) {
+                    grid.innerHTML = '<p class="members-text">No groups found. Create one above!</p>';
+                    return;
+                }
+
+                groups.forEach(g => {
+                    const card = document.createElement('div');
+                    card.className = 'group-card';
+                    card.onclick = () => openGroupDetail(g.name);
+                    card.innerHTML = '<h3>' + g.name + '</h3><div class="members-text">Members: ' + g.members.join(', ') + '</div>';
+                    grid.appendChild(card);
+                });
+            } catch (err) {
+                document.getElementById('groups-grid').innerText = 'Error loading groups.';
+            }
         }
-      } catch (err) {
-        statusDiv.textContent = 'Network Error: Check API endpoint connection.';
-      }
-    }
-  </script>
+
+        async function createGroup() {
+            const name = document.getElementById('new-group-name').value.trim();
+            const members = document.getElementById('new-group-members').value.trim();
+            if (!name || !members) return alert('Please enter both group name and members.');
+
+            try {
+                const res = await fetch('/api/groups', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name, members: members })
+                });
+                if (res.ok) {
+                    document.getElementById('new-group-name').value = '';
+                    document.getElementById('new-group-members').value = '';
+                    toggleNewGroupForm();
+                    fetchGroups();
+                } else {
+                    alert('Error creating group.');
+                }
+            } catch (err) {
+                alert('Connection error.');
+            }
+        }
+
+        async function openGroupDetail(groupName) {
+            currentGroup = groupName;
+            document.getElementById('group-list-view').classList.add('hidden');
+            document.getElementById('group-detail-view').classList.remove('hidden');
+            document.getElementById('detail-group-name').innerText = groupName;
+
+            try {
+                const res = await fetch('/api/groups/' + encodeURIComponent(groupName));
+                const data = await res.json();
+
+                document.getElementById('detail-group-members').innerText = 'Members: ' + data.members.join(', ');
+                document.getElementById('detail-total-spent').innerText = '$' + data.total_spent.toFixed(2);
+
+                const select = document.getElementById('expense-paid-by');
+                select.innerHTML = '';
+                data.members.forEach(m => {
+                    const opt = document.createElement('option');
+                    opt.value = m;
+                    opt.innerText = m;
+                    select.appendChild(opt);
+                });
+
+                const balancesDiv = document.getElementById('balances-container');
+                balancesDiv.innerHTML = '';
+                Object.keys(data.balances).forEach(m => {
+                    const bal = data.balances[m];
+                    const item = document.createElement('div');
+                    item.className = 'balance-item';
+                    
+                    let badgeClass = 'badge-settled';
+                    let statusText = 'settled up';
+                    if (bal > 0) {
+                        badgeClass = 'badge-owed';
+                        statusText = 'is owed $' + bal.toFixed(2);
+                    } else if (bal < 0) {
+                        badgeClass = 'badge-owes';
+                        statusText = 'owes $' + Math.abs(bal).toFixed(2);
+                    }
+
+                    item.innerHTML = '<strong>' + m + '</strong><span class="badge ' + badgeClass + '">' + statusText + '</span>';
+                    balancesDiv.appendChild(item);
+                });
+
+                const historyDiv = document.getElementById('expenses-history');
+                historyDiv.innerHTML = '';
+                if (data.expenses.length === 0) {
+                    historyDiv.innerHTML = '<p class="members-text">No expenses added yet.</p>';
+                } else {
+                    data.expenses.forEach(e => {
+                        const div = document.createElement('div');
+                        div.className = 'expense-item';
+                        div.innerHTML = '<div><strong>' + e.description + '</strong><br><span class="members-text">Paid by ' + e.paid_by + '</span></div><div style="font-weight:700;">$' + parseFloat(e.amount).toFixed(2) + '</div>';
+                        historyDiv.appendChild(div);
+                    });
+                }
+            } catch (err) {
+                alert('Error loading group details.');
+            }
+        }
+
+        async function submitExpense() {
+            const desc = document.getElementById('expense-desc').value.trim();
+            const amt = parseFloat(document.getElementById('expense-amount').value);
+            const paidBy = document.getElementById('expense-paid-by').value;
+            const statusDiv = document.getElementById('expense-form-status');
+
+            if (!desc || isNaN(amt) || amt <= 0) {
+                statusDiv.style.color = 'red';
+                statusDiv.innerText = 'Please enter a valid description and amount.';
+                return;
+            }
+
+            statusDiv.style.color = '#333';
+            statusDiv.innerText = 'Submitting expense...';
+
+            try {
+                const res = await fetch('/api/expenses', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        group_name: currentGroup,
+                        description: desc,
+                        amount: amt,
+                        paid_by: paidBy
+                    })
+                });
+
+                if (res.ok) {
+                    document.getElementById('expense-desc').value = '';
+                    document.getElementById('expense-amount').value = '';
+                    statusDiv.style.color = 'green';
+                    statusDiv.innerText = 'Expense added successfully!';
+                    setTimeout(() => { statusDiv.innerText = ''; }, 3000);
+                    openGroupDetail(currentGroup);
+                } else {
+                    const errText = await res.text();
+                    statusDiv.style.color = 'red';
+                    statusDiv.innerText = 'Server error (' + res.status + '): ' + errText;
+                }
+            } catch (err) {
+                statusDiv.style.color = 'red';
+                statusDiv.innerText = 'Connection error: ' + err.message;
+            }
+        }
+
+        function showGroupList() {
+            currentGroup = null;
+            document.getElementById('group-detail-view').classList.add('hidden');
+            document.getElementById('group-list-view').classList.remove('hidden');
+            fetchGroups();
+        }
+
+        function toggleNewGroupForm() {
+            document.getElementById('new-group-card').classList.toggle('hidden');
+        }
+
+        fetchGroups();
+    </script>
 </body>
 </html>
